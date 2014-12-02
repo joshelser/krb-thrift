@@ -31,14 +31,45 @@ import org.apache.thrift.transport.TTransport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.beust.jcommander.JCommander;
+import com.beust.jcommander.Parameter;
+import com.beust.jcommander.ParameterException;
+
 /**
  *
  */
 public class Client {
   private static final Logger log = LoggerFactory.getLogger(Client.class);
 
+  private static class Opts {
+    @Parameter(names = {"-s", "--server"}, required = true, description = "Hostname of Thrift server")
+    private String server;
+
+    @Parameter(names = {"-p", "--primary"}, required = true, description = "Leading component of the Kerberos principal for the server")
+    private String primary;
+
+    @Parameter(names = {"-i", "--instance"}, required = true, description = "Second component of the Kerberos principal for the server")
+    private String instance;
+
+    @Parameter(names = {"-d", "--dir"}, required = false, description = "HDFS directory to perform `ls` on")
+    private String dir = "/";
+  }
+
   public static void main(String[] args) throws Exception {
-    TTransport transport = new TSocket("node1.example.com", 7911); // client to connect to server and port
+    Opts opts = new Opts();
+
+    JCommander commander = new JCommander();
+    commander.addObject(opts);
+    commander.setProgramName(Client.class.getName());
+    try {
+      commander.parse(args);
+    } catch (ParameterException ex) {
+      commander.usage();
+      System.err.println(ex.getMessage());
+      System.exit(1);
+    }
+
+    TTransport transport = new TSocket(opts.server, 7911); // client to connect to server and port
     Map<String,String> saslProperties = new HashMap<String,String>();
     saslProperties.put(Sasl.QOP, "auth-conf"); // authorization and confidentiality
 
@@ -49,8 +80,8 @@ public class Client {
 
     TSaslClientTransport saslTransport = new TSaslClientTransport("GSSAPI", // tell SASL to use GSSAPI, which supports Kerberos
         null, // authorizationid - null
-        "accumulo", // base kerberos principal name - myprincipal/my.client.com@MY.REALM
-        "node1.example.com", // kerberos principal server - myprincipal/my.server.com@MY.REALM
+        opts.primary, // base kerberos principal name - myprincipal/my.server.com@MY.REALM
+        opts.instance, // kerberos principal server - myprincipal/my.server.com@MY.REALM
         saslProperties, // Properties set, above
         null, // callback handler - null
         transport); // underlying transport
@@ -60,13 +91,9 @@ public class Client {
     HdfsService.Client client = new HdfsService.Client(new TBinaryProtocol(ugiTransport)); // Setup our thrift client
     ugiTransport.open();
 
-    String dir = "/";
-    if (args.length == 1) {
-      dir = args[0];
-    }
-    String response = client.ls(dir); // send message
+    String response = client.ls(opts.dir); // send message
 
-    System.out.println("$ ls " + dir + "\n" + response);
+    System.out.println("$ ls " + opts.dir + "\n" + response);
 
     transport.close();
   }
