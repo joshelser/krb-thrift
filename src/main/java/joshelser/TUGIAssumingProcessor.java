@@ -23,26 +23,27 @@ import javax.security.sasl.SaslServer;
 
 import org.apache.hadoop.fs.FileSystem;
 import org.apache.hadoop.security.UserGroupInformation;
-import org.apache.log4j.Logger;
 import org.apache.thrift.TException;
 import org.apache.thrift.TProcessor;
 import org.apache.thrift.protocol.TProtocol;
 import org.apache.thrift.transport.TSaslServerTransport;
 import org.apache.thrift.transport.TTransport;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 
 /**
  * Processor that pulls the SaslServer object out of the transport, and assumes the remote user's UGI before calling through to the original processor.
  *
  * This is used on the server side to set the UGI for each specific call.
+ *
+ * Lifted from Apache Hive 0.14
  */
 public class TUGIAssumingProcessor implements TProcessor {
-  private static final Logger log = Logger.getLogger(TUGIAssumingProcessor.class);
+  private static final Logger log = LoggerFactory.getLogger(TUGIAssumingProcessor.class);
   final TProcessor wrapped;
-  boolean useProxy;
 
-  public TUGIAssumingProcessor(TProcessor wrapped, boolean useProxy) {
+  public TUGIAssumingProcessor(TProcessor wrapped) {
     this.wrapped = wrapped;
-    this.useProxy = useProxy;
   }
 
   @Override
@@ -56,48 +57,36 @@ public class TUGIAssumingProcessor implements TProcessor {
     String authId = saslServer.getAuthorizationID();
     String endUser = authId;
 
-    // We do this elsewhere in Accumulo already
-    // Socket socket = ((TSocket) (saslTrans.getUnderlyingTransport())).getSocket();
-    // remoteAddress.set(socket.getInetAddress());
-
     UserGroupInformation clientUgi = null;
     try {
-      if (useProxy) {
-        clientUgi = UserGroupInformation.createProxyUser(endUser, UserGroupInformation.getLoginUser());
-        final String remoteUser = clientUgi.getShortUserName();
-        log.debug("Set remoteUser :" + remoteUser);
-        return clientUgi.doAs(new PrivilegedExceptionAction<Boolean>() {
-          @Override
-          public Boolean run() {
-            try {
-              return wrapped.process(inProt, outProt);
-            } catch (TException te) {
-              throw new RuntimeException(te);
-            }
+      clientUgi = UserGroupInformation.createProxyUser(endUser, UserGroupInformation.getLoginUser());
+      final String remoteUser = clientUgi.getShortUserName();
+      log.debug("Executing action as {}", remoteUser);
+      return clientUgi.doAs(new PrivilegedExceptionAction<Boolean>() {
+        @Override
+        public Boolean run() {
+          try {
+            return wrapped.process(inProt, outProt);
+          } catch (TException te) {
+            throw new RuntimeException(te);
           }
-        });
-      } else {
-        // use the short user name for the request
-        UserGroupInformation endUserUgi = UserGroupInformation.createRemoteUser(endUser);
-        final String remoteUser = endUserUgi.getShortUserName();
-        log.debug("Set remoteUser :" + remoteUser + ", from endUser :" + endUser);
-        return wrapped.process(inProt, outProt);
-      }
+        }
+      });
     } catch (RuntimeException rte) {
       if (rte.getCause() instanceof TException) {
+        log.error("Failed to invoke wrapped processor", rte.getCause());
         throw (TException) rte.getCause();
       }
       throw rte;
-    } catch (InterruptedException ie) {
-      throw new RuntimeException(ie); // unexpected!
-    } catch (IOException ioe) {
-      throw new RuntimeException(ioe); // unexpected!
+    } catch (InterruptedException | IOException e) {
+      log.error("Failed to invoke wrapped processor", e);
+      throw new RuntimeException(e);
     } finally {
       if (clientUgi != null) {
         try {
           FileSystem.closeAllForUGI(clientUgi);
         } catch (IOException exception) {
-          log.error("Could not clean up file-system handles for UGI: " + clientUgi, exception);
+          log.error("Could not clean up file-system handles for UGI: {}", clientUgi, exception);
         }
       }
     }

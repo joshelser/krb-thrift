@@ -30,6 +30,8 @@ import org.apache.thrift.transport.TTransportException;
  * opened so that the SASL mechanisms have access to the right principal. This transport wraps the Sasl transports to set up the right UGI context for open().
  *
  * This is used on the client side, where the API explicitly opens a transport to the server.
+ *
+ * Lifted from Apache Hive 0.14
  */
 public class TUGIAssumingTransport extends TFilterTransport {
   protected UserGroupInformation ugi;

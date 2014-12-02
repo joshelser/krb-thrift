@@ -36,7 +36,7 @@ import com.beust.jcommander.Parameter;
 /**
  * Client configured to pass its UserGroupInformation/Kerberos credentials across a Thrift RPC
  */
-public class Client {
+public class Client implements ServiceBase {
   private static final Logger log = LoggerFactory.getLogger(Client.class);
 
   private static class Opts extends ParseBase {
