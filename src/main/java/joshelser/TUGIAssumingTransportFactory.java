@@ -28,6 +28,8 @@ import com.google.common.base.Preconditions;
  * A TransportFactory that wraps another one, but assumes a specified UGI before calling through.
  *
  * This is used on the server side to assume the server's Principal when accepting clients.
+ *
+ * Borrowed from Apache Hive 0.14
  */
 public class TUGIAssumingTransportFactory extends TTransportFactory {
   private final UserGroupInformation ugi;
