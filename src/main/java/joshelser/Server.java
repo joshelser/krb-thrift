@@ -46,53 +46,67 @@ import com.beust.jcommander.Parameter;
  */
 public class Server implements ServiceBase {
   private static final Logger log = LoggerFactory.getLogger(Server.class);
-
+  
   private static class Opts extends ParseBase {
     @Parameter(names = {"-k", "--keytab"}, required = true, description = "Kerberos keytab")
     private String keytab;
-
+    
     @Parameter(names = {"-p", "--principal"}, required = true, description = "Kerberos principal for the provided keytab, _HOST expansion allowed.")
     private String principal;
-
+    
     @Parameter(names = {"--port"}, required = false, description = "Port to bind the Thrift server on, default " + DEFAULT_THRIFT_SERVER_PORT)
     private int port = DEFAULT_THRIFT_SERVER_PORT;
   }
-
+  
   public static void main(String[] args) throws Exception {
     Opts opts = new Opts();
-
+    
     opts.parseArgs(Server.class, args);
-
+    
     Configuration conf = new Configuration();
     FileSystem fs = FileSystem.get(conf);
-
+    
+    // Parse out the primary/instance@DOMAIN from the principal
     String principal = SecurityUtil.getServerPrincipal(opts.principal, InetAddress.getLocalHost().getCanonicalHostName());
     HadoopKerberosName name = new HadoopKerberosName(principal);
     String primary = name.getServiceName();
     String instance = name.getHostName();
-
+    
+    // Log in using the keytab
     UserGroupInformation.loginUserFromKeytab(principal, opts.keytab);
-
+    
+    // Get the info from our login
     UserGroupInformation serverUser = UserGroupInformation.getLoginUser();
     log.info("Current user: {}", serverUser);
-
+    
+    // Open the server using the provide dport
     TServerSocket serverTransport = new TServerSocket(opts.port);
-    HdfsService.Processor<Iface> processor = new HdfsService.Processor<Iface>(new HdfsServiceImpl(fs)); // Wrap the thrift server impl
+    
+    // Wrap our implementation with the interface's processor
+    HdfsService.Processor<Iface> processor = new HdfsService.Processor<Iface>(new HdfsServiceImpl(fs));
+    
+    // Use authorization and confidentiality
     Map<String,String> saslProperties = new HashMap<String,String>();
-    saslProperties.put(Sasl.QOP, "auth-conf");  // authorization and confidentiality
-
-    TSaslServerTransport.Factory saslTransportFactory = new TSaslServerTransport.Factory();     // Creating the server definition
-    saslTransportFactory.addServerDefinition(
-                "GSSAPI",       //  tell SASL to use GSSAPI, which supports Kerberos
-                primary,   //  base kerberos principal name - myprincipal/my.server.com@MY.REALM
-                instance,    //  kerberos principal server - myprincipal/my.server.com@MY.REALM
-                saslProperties,      //  Properties set, above
-                new SaslRpcServer.SaslGssCallbackHandler()); // Ensures that authenticated user is the same as the authorized user
-
+    saslProperties.put(Sasl.QOP, "auth-conf");
+    
+    // Creating the server definition
+    TSaslServerTransport.Factory saslTransportFactory = new TSaslServerTransport.Factory();
+        saslTransportFactory.addServerDefinition("GSSAPI", // tell SASL to use GSSAPI, which supports Kerberos
+        primary, // kerberos primary for server - "myprincipal" in myprincipal/my.server.com@MY.REALM
+        instance, // kerberos instance for server - "my.server.com" in myprincipal/my.server.com@MY.REALM
+        saslProperties, // Properties set, above
+        new SaslRpcServer.SaslGssCallbackHandler()); // Ensures that authenticated user is the same as the authorized user
+    
+    // Make sure the TTransportFactory is performing a UGI.doAs
     TTransportFactory ugiTransportFactory = new TUGIAssumingTransportFactory(saslTransportFactory, serverUser);
+    
+    // Processor which takes the UGI for the RPC call, proxy that user on the server login, and then run as the proxied user
     TUGIAssumingProcessor ugiProcessor = new TUGIAssumingProcessor(processor);
+    
+    // Make a simple TTheadPoolServer with the processor and transport factory
     TServer server = new TThreadPoolServer(new TThreadPoolServer.Args(serverTransport).transportFactory(ugiTransportFactory).processor(ugiProcessor));
-
-    server.serve();   // Thrift server start
+    
+    // Start the thrift server
+    server.serve();
   }
 }

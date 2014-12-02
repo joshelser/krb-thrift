@@ -62,32 +62,44 @@ public class Client implements ServiceBase {
     // Parse the options
     opts.parseArgs(Client.class, args);
 
-    TTransport transport = new TSocket(opts.server, opts.port); // client to connect to server and port
+    // Open up a socket to the server:port
+    TTransport transport = new TSocket(opts.server, opts.port);
     Map<String,String> saslProperties = new HashMap<String,String>();
-    saslProperties.put(Sasl.QOP, "auth-conf"); // authorization and confidentiality
+    // Use authorization and confidentiality
+    saslProperties.put(Sasl.QOP, "auth-conf");
 
     log.info("Security is enabled: {}", UserGroupInformation.isSecurityEnabled());
 
+    // Log in via UGI, ensures we have logged in with our KRB credentials
     UserGroupInformation currentUser = UserGroupInformation.getCurrentUser();
     log.info("Current user: {}", currentUser);
 
-    TSaslClientTransport saslTransport = new TSaslClientTransport("GSSAPI", // tell SASL to use GSSAPI, which supports Kerberos
+    // SASL client transport -- does the Kerberos lifting for us
+    TSaslClientTransport saslTransport = new TSaslClientTransport(
+        "GSSAPI", // tell SASL to use GSSAPI, which supports Kerberos
         null, // authorizationid - null
-        opts.primary, // base kerberos principal name - myprincipal/my.server.com@MY.REALM
-        opts.instance, // kerberos principal server - myprincipal/my.server.com@MY.REALM
+        opts.primary, // kerberos primary for server - "myprincipal" in myprincipal/my.server.com@MY.REALM
+        opts.instance, // kerberos instance for server - "my.server.com" in myprincipal/my.server.com@MY.REALM
         saslProperties, // Properties set, above
         null, // callback handler - null
         transport); // underlying transport
 
-    TUGIAssumingTransport ugiTransport = new TUGIAssumingTransport(saslTransport, UserGroupInformation.getCurrentUser());
+    // Make sure the transport is opened as the user we logged in as
+    TUGIAssumingTransport ugiTransport = new TUGIAssumingTransport(saslTransport, currentUser);
 
-    HdfsService.Client client = new HdfsService.Client(new TBinaryProtocol(ugiTransport)); // Setup our thrift client
+    // Setup our thrift client to our custom thrift service
+    HdfsService.Client client = new HdfsService.Client(new TBinaryProtocol(ugiTransport));
+
+    // Open the transport
     ugiTransport.open();
 
-    String response = client.ls(opts.dir); // send message
+    // Invoke the RPC
+    String response = client.ls(opts.dir);
 
+    // Print out the result
     System.out.println("$ ls " + opts.dir + "\n" + response);
 
+    // Close the transport (don't leak resources)
     transport.close();
   }
 }
