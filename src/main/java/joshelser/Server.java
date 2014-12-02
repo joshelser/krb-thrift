@@ -39,37 +39,29 @@ import org.apache.thrift.transport.TTransportFactory;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.beust.jcommander.JCommander;
 import com.beust.jcommander.Parameter;
-import com.beust.jcommander.ParameterException;
 
 /**
- *
+ * Server configured to only accept RPC with UserGroupInformation/Kerberos credentials included, and then run the RPC implementation as that user.
  */
-public class Server {
+public class Server implements ServiceBase {
   private static final Logger log = LoggerFactory.getLogger(Server.class);
 
-  private static class Opts {
+  private static class Opts extends ParseBase {
     @Parameter(names = {"-k", "--keytab"}, required = true, description = "Kerberos keytab")
     private String keytab;
 
     @Parameter(names = {"-p", "--principal"}, required = true, description = "Kerberos principal for the provided keytab, _HOST expansion allowed.")
     private String principal;
+
+    @Parameter(names = {"--port"}, required = false, description = "Port to bind the Thrift server on, default " + DEFAULT_THRIFT_SERVER_PORT)
+    private int port = DEFAULT_THRIFT_SERVER_PORT;
   }
 
   public static void main(String[] args) throws Exception {
     Opts opts = new Opts();
 
-    JCommander commander = new JCommander();
-    commander.addObject(opts);
-    commander.setProgramName(Client.class.getName());
-    try {
-      commander.parse(args);
-    } catch (ParameterException ex) {
-      commander.usage();
-      System.err.println(ex.getMessage());
-      System.exit(1);
-    }
+    opts.parseArgs(Server.class, args);
 
     Configuration conf = new Configuration();
     FileSystem fs = FileSystem.get(conf);
@@ -84,7 +76,7 @@ public class Server {
     UserGroupInformation serverUser = UserGroupInformation.getLoginUser();
     log.info("Current user: {}", serverUser);
 
-    TServerSocket serverTransport = new TServerSocket(7911);  // new server on port 7911
+    TServerSocket serverTransport = new TServerSocket(opts.port);
     HdfsService.Processor<Iface> processor = new HdfsService.Processor<Iface>(new HdfsServiceImpl(fs)); // Wrap the thrift server impl
     Map<String,String> saslProperties = new HashMap<String,String>();
     saslProperties.put(Sasl.QOP, "auth-conf");  // authorization and confidentiality
@@ -98,7 +90,7 @@ public class Server {
                 new SaslRpcServer.SaslGssCallbackHandler()); // Ensures that authenticated user is the same as the authorized user
 
     TTransportFactory ugiTransportFactory = new TUGIAssumingTransportFactory(saslTransportFactory, serverUser);
-    TUGIAssumingProcessor ugiProcessor = new TUGIAssumingProcessor(processor, true);
+    TUGIAssumingProcessor ugiProcessor = new TUGIAssumingProcessor(processor);
     TServer server = new TThreadPoolServer(new TThreadPoolServer.Args(serverTransport).transportFactory(ugiTransportFactory).processor(ugiProcessor));
 
     server.serve();   // Thrift server start

@@ -31,19 +31,20 @@ import org.apache.thrift.transport.TTransport;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
-import com.beust.jcommander.JCommander;
 import com.beust.jcommander.Parameter;
-import com.beust.jcommander.ParameterException;
 
 /**
- *
+ * Client configured to pass its UserGroupInformation/Kerberos credentials across a Thrift RPC
  */
 public class Client {
   private static final Logger log = LoggerFactory.getLogger(Client.class);
 
-  private static class Opts {
+  private static class Opts extends ParseBase {
     @Parameter(names = {"-s", "--server"}, required = true, description = "Hostname of Thrift server")
     private String server;
+
+    @Parameter(names = {"--port"}, required = false, description = "Port of the Thrift server, defaults to ")
+    private int port = DEFAULT_THRIFT_SERVER_PORT;
 
     @Parameter(names = {"-p", "--primary"}, required = true, description = "Leading component of the Kerberos principal for the server")
     private String primary;
@@ -58,18 +59,10 @@ public class Client {
   public static void main(String[] args) throws Exception {
     Opts opts = new Opts();
 
-    JCommander commander = new JCommander();
-    commander.addObject(opts);
-    commander.setProgramName(Client.class.getName());
-    try {
-      commander.parse(args);
-    } catch (ParameterException ex) {
-      commander.usage();
-      System.err.println(ex.getMessage());
-      System.exit(1);
-    }
+    // Parse the options
+    opts.parseArgs(Client.class, args);
 
-    TTransport transport = new TSocket(opts.server, 7911); // client to connect to server and port
+    TTransport transport = new TSocket(opts.server, opts.port); // client to connect to server and port
     Map<String,String> saslProperties = new HashMap<String,String>();
     saslProperties.put(Sasl.QOP, "auth-conf"); // authorization and confidentiality
 
